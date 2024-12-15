@@ -46,6 +46,30 @@ class ActorCritic(nn.Module):
                         nn.ReLU(),
                         nn.Linear(512, 256),
         )
+
+        self.topo_critic = nn.Sequential(
+                            nn.Linear(self.config.input_dim + self.config.action_dim, 512),  
+                            nn.ReLU(),
+                            nn.Linear(512, 256),
+                            nn.ReLU(),
+                            nn.Linear(256, 128),
+                            nn.ReLU(),
+                            nn.Linear(128, 1)  
+                            )
+
+
+
+        self.redispatch_critic = nn.Sequential(
+                            nn.Linear(self.config.input_dim + self.config.n_gen, 512),  
+                            nn.ReLU(),
+                            nn.Linear(512, 256),
+                            nn.ReLU(),
+                            nn.Linear(256, 128),
+                            nn.ReLU(),
+                            nn.Linear(128, 1)  
+                            )
+
+
         self.topology = nn.Linear(256, self.config.action_dim)
         self.redispatch_mean = nn.Linear(256, self.config.n_gen)  # Mean for continuous actions
         self.redispatch_log_std = nn.Linear(256, self.config.n_gen)  # Log std for continuous actions
@@ -90,4 +114,4 @@ class ActorCritic(nn.Module):
         return topo_actions, redispatch_action
     
 
-    
+
