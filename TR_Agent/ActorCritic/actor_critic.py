@@ -78,11 +78,17 @@ class ActorCritic(nn.Module):
         self.redispatch_activation = RedispatchActivation(bounds=[5, 10, 15])
         
 
+        self.logprobs = []
+        self.topo_state_values = []
+        self.rewards = []
+
         self.to(self.device)
         logging.info(f"model initiated with GPU")
+
+
     
     def forward(self, x):
-        x = torch.tensor(x)
+        x = torch.from_numpy(x, dtype=torch.float)
 
         x = self.network(x)
 
@@ -111,7 +117,86 @@ class ActorCritic(nn.Module):
         redispatch_distribution = Normal(gen_mean, gen_std)
         redispatch_action = redispatch_distribution.sample()  # Continuous action values
 
+
+        self.logprobs.append(action_distribution.log_prob(topo_actions))
+
+        # action value from critic
+        action_value = torch.cat([obs, topo_actions], dim=-1)
+        self.topo_state_values.append(self.topo_critic(action_value))
+
         return topo_actions, redispatch_action
+    
+
+
+    def BoostrappingTopoLoss(self):
+        topo_loss = 0
+
+        # TD Target Computation
+        for t in range(len(self.rewards) - 1):  # Exclude final step (no future state)
+            reward = self.rewards[t]
+            next_value = self.topo_state_values[t + 1].detach()  # Next state's value
+            td_target = reward + self.config.gamma * next_value  # Bootstrapped target
+
+            value = self.topo_state_values[t]  # Current state's value
+            logprob = self.topo_log_probs[t]  # Log prob of action
+
+            # Compute advantage (TD Error)
+            advantage = td_target - value.item()
+
+            # Actor Loss
+            action_loss = -logprob * advantage
+
+            # Critic Loss
+            value_loss = F.smooth_l1_loss(value, td_target)
+
+            # Combine Losses
+            topo_loss += (action_loss + value_loss)
+
+        # Handle the last step separately (no bootstrapping)
+        final_value = self.topo_state_values[-1]
+        final_reward = self.rewards[-1]
+        value_loss = F.smooth_l1_loss(final_value, final_reward)
+        topo_loss += value_loss
+
+        return topo_loss
+
+
+
+
+    def TopoLoss(self):
+        rewards = []
+        dis_reward = 0
+        for reward in self.rewards[::-1]:
+            dis_reward = reward + self.config.gamma * dis_reward
+            rewards.insert(0, dis_reward)
+                
+        # normalizing the rewards:
+        rewards = torch.tensor(rewards)
+        rewards = (rewards - rewards.mean()) / (rewards.std())
+        
+        topo_loss = 0
+        for logprob, value, reward in zip(self.logprobs, self.topo_state_values, rewards):
+            advantage = reward  - value.item()
+            action_loss = -logprob * advantage
+            value_loss = F.smooth_l1_loss(value, reward)
+            topo_loss += (action_loss + value_loss)   
+        return topo_loss
+    
+
+    def RedispatchLoss(self):
+        pass
+    
+
+
+    def learn(self):
+        pass
+
+
+        # Critic for topology action
+
+
+
+        # Critic for redispatch action
     
 
 
