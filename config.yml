@@ -1,0 +1,3 @@
+input_dim : 467
+action_dim : 179
+n_gen : 3
