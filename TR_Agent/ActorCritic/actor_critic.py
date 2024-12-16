@@ -79,7 +79,11 @@ class ActorCritic(nn.Module):
         
 
         self.logprobs = []
+        self.cont_logprobs = []
+
         self.topo_state_values = []
+        self.redis_state_values = []
+        
         self.rewards = []
 
         self.to(self.device)
@@ -119,10 +123,15 @@ class ActorCritic(nn.Module):
 
 
         self.logprobs.append(action_distribution.log_prob(topo_actions))
+        self.cont_logprobs.append(redispatch_distribution.log_prob(redispatch_action).sum())
 
         # action value from critic
         action_value = torch.cat([obs, topo_actions], dim=-1)
         self.topo_state_values.append(self.topo_critic(action_value))
+
+        # continuous action value from critic
+        c_action = torch.cat([obs, redispatch_action], dim=-1)
+        self.redis_state_values.append(self.redispatch_critic(c_action))
 
         return topo_actions, redispatch_action
     
@@ -183,8 +192,25 @@ class ActorCritic(nn.Module):
         return topo_loss
     
 
+
     def RedispatchLoss(self):
-        pass
+        rewards = []
+        dis_reward = 0
+        for reward in self.rewards[::-1]:
+            dis_reward = reward + self.config.gamma * dis_reward
+            rewards.insert(0, dis_reward)
+                
+        # normalizing the rewards:
+        rewards = torch.tensor(rewards)
+        rewards = (rewards - rewards.mean()) / (rewards.std())
+        
+        redis_loss = 0
+        for logprob, value, reward in zip(self.cont_logprobs, self.redis_state_values, rewards):
+            advantage = reward  - value.item()
+            action_loss = -logprob * advantage
+            value_loss = F.smooth_l1_loss(value, reward)
+            redis_loss += (action_loss + value_loss)   
+        return redis_loss
     
 
 
