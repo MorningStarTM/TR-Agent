@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.optim as optim
 import torch.nn as nn
@@ -78,6 +79,7 @@ class ActorCritic(nn.Module):
         # Redispatch activation to enforce bounds
         self.redispatch_activation = RedispatchActivation(bounds=[5, 10, 15])
         
+        self.optimizer = optim.Adam(self.parameters(), lr=self.config.learning_rate)
 
         self.logprobs = []
         self.cont_logprobs = []
@@ -151,7 +153,7 @@ class ActorCritic(nn.Module):
         c_action = torch.cat([obs, redispatch_action], dim=-1)
         self.redis_state_values.append(self.redispatch_critic(c_action))
 
-        return topo_actions, redispatch_action
+        return topo_actions.item(), redispatch_action
     
 
 
@@ -231,5 +233,12 @@ class ActorCritic(nn.Module):
         return redis_loss
     
     
+    
+    def save_model(self, model_name="actor_critic.pt"):
+        torch.save(self.state_dict(), os.path.join(self.config.path, model_name))
+        print(f"model saved at {self.config.path}")
 
 
+    def load_model(self, model_name="actor_critic.pt"):
+        self.load_state_dict(torch.load(os.path.join(self.config.path, model_name)))
+        print(f"model loaded at {self.config.path}")
