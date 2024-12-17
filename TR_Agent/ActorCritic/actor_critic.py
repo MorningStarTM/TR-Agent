@@ -23,6 +23,7 @@ class RedispatchActivation(nn.Module):
         :param x: Input tensor of shape (batch_size, n_gen) representing raw redispatch values.
         :return: Scaled tensor of shape (batch_size, n_gen) with values constrained to the given bounds.
         """
+
         x = torch.sigmoid(x)  # Scale to the range [0, 1]
         x = x * self.bounds.to(x.device)  # Scale to [0, bound] using element-wise multiplication
         return x
@@ -48,7 +49,7 @@ class ActorCritic(nn.Module):
         )
 
         self.topo_critic = nn.Sequential(
-                            nn.Linear(self.config.input_dim + self.config.action_dim, 512),  
+                            nn.Linear(self.config.input_dim + 1, 512),  
                             nn.ReLU(),
                             nn.Linear(512, 256),
                             nn.ReLU(),
@@ -86,47 +87,64 @@ class ActorCritic(nn.Module):
         
         self.rewards = []
 
+
+        
+        self.min_means = torch.tensor([0, 0, 0], dtype=torch.float32, device=self.device)
+        self.max_means = torch.tensor([5, 10, 15], dtype=torch.float32, device=self.device)
+        self.min_std = torch.tensor([0.1, 0.1, 0.1], dtype=torch.float32, device=self.device)
+        self.max_std = torch.tensor([1.0, 1.0, 1.0], dtype=torch.float32, device=self.device)
+
         self.to(self.device)
         logging.info(f"model initiated with GPU")
 
 
     
     def forward(self, x):
-        x = torch.from_numpy(x, dtype=torch.float)
 
         x = self.network(x)
 
         topo = self.topology(x)
 
         gen_mean = self.redispatch_mean(x)  # Mean
-        gen_mean = self.redispatch_activation(gen_mean)
 
         gen_log_std = self.redispatch_log_std(x)  # Log standard deviation
-        gen_std = torch.exp(gen_log_std)  # Standard deviation (ensure positivity)
+        
+        constrained_means = torch.sigmoid(gen_mean) * (self.max_means - self.min_means) + self.min_means
+        
+        # Constrain the log std using a tanh function to map it to a reasonable range
+        constrained_log_std = torch.tanh(gen_log_std) * (self.max_std - self.min_std) + self.min_std
+        
+        # Exponentiate to get the standard deviation
+        constrained_std = torch.exp(constrained_log_std)
+        
+        #gen_std = torch.exp(gen_log_std)  # Standard deviation (ensure positivity)
 
-        return topo, gen_mean, gen_std
+        return topo, constrained_means, constrained_std
     
 
+        
 
     def act(self, obs):
+        obs = torch.tensor(obs, dtype=torch.float32, device=self.device)
         topo, gen_mean, gen_std = self.forward(obs)
+        
 
         # topology action
-        action_probs = F.softmax(topo)
+        action_probs = F.softmax(topo, dim=-1)
         action_distribution = Categorical(action_probs)
         topo_actions = action_distribution.sample()
-
+        topo_actions = topo_actions.unsqueeze(-1)
 
         # Redispatching action
         redispatch_distribution = Normal(gen_mean, gen_std)
         redispatch_action = redispatch_distribution.sample()  # Continuous action values
 
 
-        self.logprobs.append(action_distribution.log_prob(topo_actions))
+        self.logprobs.append(action_distribution.log_prob(topo_actions.squeeze(-1)))
         self.cont_logprobs.append(redispatch_distribution.log_prob(redispatch_action).sum())
 
         # action value from critic
-        action_value = torch.cat([obs, topo_actions], dim=-1)
+        action_value = torch.cat([obs, topo_actions.float()], dim=-1)
         self.topo_state_values.append(self.topo_critic(action_value))
 
         # continuous action value from critic
@@ -212,17 +230,6 @@ class ActorCritic(nn.Module):
             redis_loss += (action_loss + value_loss)   
         return redis_loss
     
-
-
-    def learn(self):
-        pass
-
-
-        # Critic for topology action
-
-
-
-        # Critic for redispatch action
     
 
 
